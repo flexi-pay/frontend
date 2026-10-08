@@ -3,13 +3,8 @@ import QRCode from "qrcode";
 import jsQR from "jsqr";
 import { NETWORK } from "../lib/config";
 import {
-  changeTrust,
-  fundWithFriendbot,
-  sendPayment,
-  spendableXlm,
-  type AccountState,
-  type HistoryItem,
-  type MemoInput,
+  changeTrust, fundWithFriendbot, quoteSwap, sendPayment, spendableXlm, swap,
+  type AccountState, type HistoryItem, type MemoInput, type SwapQuote,
 } from "../lib/stellar";
 import { buildPayUri, parsePayUri, type PayRequest } from "../lib/sep7";
 import type { Signer } from "../lib/signer";
@@ -339,6 +334,101 @@ export function Assets({ ctx }: { ctx: WalletCtx }) {
         <Notice kind="error">{a.error}</Notice>
         <Notice kind="ok">{a.ok}</Notice>
         <button className="btn btn-primary btn-block" disabled={a.busy || !id || !ctx.state?.exists} onClick={() => add(id)}>{a.busy ? busyText : "Add asset"}</button>
+      </Card>
+    </div>
+  );
+}
+
+// ---------------- Convert (DEX path payments) ----------------
+
+export function Convert({ ctx }: { ctx: WalletCtx }) {
+  const balances = ctx.state?.balances ?? [];
+  const [from, setFrom] = useState("XLM");
+  const [to, setTo] = useState("");
+  const [amount, setAmount] = useState("");
+  const [slippage, setSlippage] = useState(1);
+  const [quote, setQuote] = useState<SwapQuote | null>(null);
+  const [quoting, setQuoting] = useState(false);
+  const [quoteErr, setQuoteErr] = useState("");
+  const a = useAction();
+  const toOptions = useMemo(() => balances.filter((b) => b.id !== from), [balances, from]);
+
+  useEffect(() => {
+    if ((!to || to === from) && toOptions.length) setTo(toOptions[0].id);
+  }, [toOptions, to, from]);
+
+  useEffect(() => {
+    setQuote(null); setQuoteErr("");
+    if (!amount || !to || !/^\d+(\.\d{1,7})?$/.test(amount) || parseFloat(amount) <= 0) return;
+    let cancelled = false;
+    setQuoting(true);
+    const t = setTimeout(async () => {
+      try {
+        const q = await quoteSwap(from, to, amount);
+        if (cancelled) return;
+        if (!q) setQuoteErr("No route found — not enough liquidity for this pair right now");
+        setQuote(q);
+      } catch (e) {
+        if (!cancelled) setQuoteErr(e instanceof Error ? e.message : String(e));
+      } finally {
+        if (!cancelled) setQuoting(false);
+      }
+    }, 400);
+    return () => { cancelled = true; clearTimeout(t); };
+  }, [from, to, amount]);
+
+  const go = () =>
+    a.run(async () => {
+      if (!quote) throw new Error("No quote");
+      const r = await swap(ctx.signer, from, to, amount, quote, slippage);
+      setAmount("");
+      await ctx.refresh();
+      return r;
+    }, (r) => <>Converted. {txLink(r.hash)}</>);
+
+  const label = (id: string) => balances.find((b) => b.id === id)?.code ?? assetLabel(id);
+  const flip = () => { if (to) { setFrom(to); setTo(from); } };
+
+  return (
+    <div className="center-wrap stack">
+      <Card title="Convert">
+        {balances.length < 2 ? (
+          <>
+            <p className="muted">Add the asset you want to convert into (for example USDC) first.</p>
+            <button className="btn btn-primary" onClick={() => ctx.go("Assets")}>Add an asset</button>
+          </>
+        ) : (
+          <>
+            <Field label="From">
+              <select value={from} onChange={(e) => setFrom(e.target.value)}>
+                {balances.map((b) => <option key={b.id} value={b.id}>{b.code} — balance {fmt(b.balance, 4)}</option>)}
+              </select>
+            </Field>
+            <div style={{ textAlign: "center" }}><button className="icon-btn" style={{ margin: "0 auto" }} onClick={flip} aria-label="Flip"><Icon name="swap" size={16} /></button></div>
+            <Field label="To">
+              <select value={to} onChange={(e) => setTo(e.target.value)}>
+                {toOptions.map((b) => <option key={b.id} value={b.id}>{b.code}{b.issuer ? ` (${short(b.issuer, 4)})` : ""}</option>)}
+              </select>
+            </Field>
+            <div className="grid2">
+              <Field label={`Amount of ${label(from)}`}><input inputMode="decimal" placeholder="0.00" value={amount} onChange={(e) => setAmount(e.target.value.trim())} /></Field>
+              <Field label="Max slippage %"><input type="number" min={0.1} max={50} step={0.1} value={slippage} onChange={(e) => setSlippage(parseFloat(e.target.value) || 1)} /></Field>
+            </div>
+            <div className="quote">
+              {quoting ? <span className="muted">Finding the best rate…</span> : quote ? (
+                <>
+                  <div className="between"><span className="muted">You receive</span><b>≈ {fmt(quote.destAmount, 4)} {label(to)}</b></div>
+                  <div className="between small"><span className="muted">Rate</span><span>1 {label(from)} = {fmt(parseFloat(quote.destAmount) / parseFloat(amount), 6)} {label(to)}</span></div>
+                  <div className="between small"><span className="muted">Minimum received</span><span>{fmt(parseFloat(quote.destAmount) * (1 - slippage / 100), 4)} {label(to)}</span></div>
+                  <div className="between small"><span className="muted">Route</span><span>{quote.path.length ? [label(from), ...quote.path.map((p) => (p.isNative() ? "XLM" : p.getCode())), label(to)].join(" → ") : "Direct"}</span></div>
+                </>
+              ) : <span className="muted">{quoteErr || "Enter an amount to see a quote"}</span>}
+            </div>
+            <Notice kind="error">{a.error}</Notice>
+            <Notice kind="ok">{a.ok}</Notice>
+            <button className="btn btn-primary btn-block" disabled={a.busy || !quote} onClick={go}>{a.busy ? (ctx.signer.kind === "external" ? "Confirm in your wallet…" : "Converting…") : "Convert"}</button>
+          </>
+        )}
       </Card>
     </div>
   );
