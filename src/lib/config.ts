@@ -44,5 +44,10 @@ export const NETWORK: NetworkConfig = {
 /** Product name — change it here to rebrand the whole app. */
 export const BRAND = "Starling";
 
-/** Deployed Starling escrow contract (C…). Set VITE_ESCROW_CONTRACT_ID after running scripts/deploy-escrow.sh. */
+/** Deployed Starling escrow contract (C…). Deploy it from flexi-pay/contracts (scripts/deploy.sh) and set VITE_ESCROW_CONTRACT_ID. */
 export const ESCROW_CONTRACT_ID: string = (import.meta.env?.VITE_ESCROW_CONTRACT_ID as string) || "";
+
+/** FlexiPay names service (flexi-pay/backend). Leave empty to hide the names feature. */
+export const NAMES_API: string = ((import.meta.env?.VITE_NAMES_API as string) || "").replace(/\/$/, "");
+/** Domain names live under, e.g. "flexipay.app" → nuel*flexipay.app */
+export const NAMES_DOMAIN: string = ((import.meta.env?.VITE_NAMES_DOMAIN as string) || "").toLowerCase();
