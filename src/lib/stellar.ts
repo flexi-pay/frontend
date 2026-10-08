@@ -1,4 +1,15 @@
-import { Asset, Horizon, NotFoundError, StrKey } from "@stellar/stellar-sdk";
+import {
+  Account,
+  Asset,
+  BASE_FEE,
+  Horizon,
+  Memo,
+  NotFoundError,
+  Operation,
+  StrKey,
+  TransactionBuilder,
+  xdr,
+} from "@stellar/stellar-sdk";
 import { NETWORK } from "./config";
 
 export const server = new Horizon.Server(NETWORK.horizonUrl);
@@ -92,4 +103,63 @@ export async function fundWithFriendbot(publicKey: string) {
     const body = await r.json().catch(() => ({}));
     throw new Error(body?.detail || `Friendbot failed (${r.status})`);
   }
+}
+
+// ---------- Transaction building (pure, testable) ----------
+
+export type MemoInput = { type: "none" | "text" | "id" | "hash"; value?: string };
+
+export function buildMemo(m?: MemoInput): Memo {
+  if (!m || m.type === "none" || !m.value) return Memo.none();
+  if (m.type === "text") {
+    if (new TextEncoder().encode(m.value).length > 28) throw new Error("Text memo max 28 bytes");
+    return Memo.text(m.value);
+  }
+  if (m.type === "id") return Memo.id(m.value);
+  // hash memos from anchors are usually base64; accept hex too
+  const isHex = /^[0-9a-fA-F]{64}$/.test(m.value);
+  return Memo.hash(isHex ? m.value : Buffer.from(m.value, "base64").toString("hex"));
+}
+
+export function buildTx(
+  source: Account | Horizon.AccountResponse,
+  ops: xdr.Operation[],
+  memo?: MemoInput,
+  fee: string = BASE_FEE,
+) {
+  const b = new TransactionBuilder(source, {
+    fee,
+    networkPassphrase: NETWORK.passphrase,
+  });
+  ops.forEach((op) => b.addOperation(op));
+  return b.addMemo(buildMemo(memo)).setTimeout(180).build();
+}
+
+export function paymentOps(
+  destination: string,
+  asset: Asset,
+  amount: string,
+  destinationExists: boolean,
+): xdr.Operation[] {
+  if (!StrKey.isValidEd25519PublicKey(destination)) throw new Error("Invalid destination address");
+  validateAmount(amount);
+  if (!destinationExists) {
+    if (!asset.isNative()) {
+      throw new Error("Destination account does not exist. Send at least 1 XLM first to create it.");
+    }
+    if (parseFloat(amount) < 1) throw new Error("Creating a new account needs at least 1 XLM");
+    return [Operation.createAccount({ destination, startingBalance: amount })];
+  }
+  return [Operation.payment({ destination, asset, amount })];
+}
+
+export function validateAmount(amount: string) {
+  if (!/^\d+(\.\d{1,7})?$/.test(amount) || parseFloat(amount) <= 0) {
+    throw new Error("Amount must be a positive number with up to 7 decimals");
+  }
+}
+
+/** Round down to 7 decimals (Stellar precision). */
+export function toStellarAmount(n: number): string {
+  return (Math.floor(n * 1e7) / 1e7).toFixed(7);
 }
