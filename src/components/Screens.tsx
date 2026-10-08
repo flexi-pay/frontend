@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import QRCode from "qrcode";
 import { NETWORK } from "../lib/config";
 import {
   fundWithFriendbot,
@@ -8,10 +9,10 @@ import {
   type HistoryItem,
   type MemoInput,
 } from "../lib/stellar";
-import { type PayRequest } from "../lib/sep7";
+import { buildPayUri, type PayRequest } from "../lib/sep7";
 import type { Signer } from "../lib/signer";
 import { Icon } from "./Icon";
-import { Card, Field, Notice, fmt, short, useAction } from "./ui";
+import { Card, Copy, Field, Notice, fmt, short, useAction } from "./ui";
 
 export type Tab = "Home" | "Send" | "Receive" | "Scan" | "Convert" | "Cash" | "Escrow" | "Assets" | "Activity" | "Settings";
 
@@ -156,6 +157,46 @@ export function Send({ ctx }: { ctx: WalletCtx }) {
         ) : (
           <button className="btn btn-primary btn-block" disabled={a.busy} onClick={go}>{a.busy ? (ctx.signer.kind === "external" ? "Confirm in your wallet…" : "Sending…") : `Confirm & send`}</button>
         )}
+      </Card>
+    </div>
+  );
+}
+
+// ---------------- Receive (SEP-7 payment request) ----------------
+
+export function Receive({ ctx }: { ctx: WalletCtx }) {
+  const balances = ctx.state?.balances ?? [];
+  const [asset, setAsset] = useState("XLM");
+  const [amount, setAmount] = useState("");
+  const [memo, setMemo] = useState("");
+  const [qr, setQr] = useState("");
+  const b = balances.find((x) => x.id === asset);
+  const uri = useMemo(() => {
+    if (!amount && !memo && asset === "XLM") return ctx.signer.publicKey;
+    return buildPayUri({ destination: ctx.signer.publicKey, amount: amount || undefined, assetCode: b?.code ?? "XLM", assetIssuer: b?.issuer, memo: memo || undefined });
+  }, [amount, memo, asset, b, ctx.signer.publicKey]);
+  useEffect(() => { QRCode.toDataURL(uri, { margin: 1, width: 440, errorCorrectionLevel: "M" }).then(setQr); }, [uri]);
+
+  return (
+    <div className="center-wrap stack">
+      <Card title="Get paid">
+        <p className="muted small">Show this code. Add an amount to create a payment request that any Stellar wallet (SEP-7) can scan and pay.</p>
+        {qr && <div className="qr-box"><img src={qr} alt="Payment QR code" /></div>}
+        <div className="grid2">
+          <Field label="Asset">
+            <select value={asset} onChange={(e) => setAsset(e.target.value)}>
+              {balances.length ? balances.map((x) => <option key={x.id} value={x.id}>{x.code}</option>) : <option value="XLM">XLM</option>}
+            </select>
+          </Field>
+          <Field label="Amount (optional)"><input inputMode="decimal" placeholder="Any amount" value={amount} onChange={(e) => setAmount(e.target.value.trim())} /></Field>
+        </div>
+        <Field label="Note / memo (optional)"><input maxLength={28} value={memo} onChange={(e) => setMemo(e.target.value)} placeholder="e.g. Invoice 42" /></Field>
+        <Field label="Your address"><code className="mono small">{ctx.signer.publicKey}</code></Field>
+        <div className="row">
+          <Copy text={ctx.signer.publicKey} label="Copy address" />
+          {uri !== ctx.signer.publicKey && <Copy text={uri} label="Copy payment link" />}
+          {"share" in navigator && <button className="btn btn-ghost btn-sm" onClick={() => navigator.share({ text: uri }).catch(() => {})}>Share</button>}
+        </div>
       </Card>
     </div>
   );
