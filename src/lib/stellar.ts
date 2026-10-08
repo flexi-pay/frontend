@@ -222,3 +222,75 @@ export function horizonError(e: unknown): string {
   }
   return anyE?.response?.data?.title || anyE?.message || String(e);
 }
+
+// ---------- High-level actions ----------
+
+export async function sendPayment(
+  signer: Signer,
+  destination: string,
+  assetIdStr: string,
+  amount: string,
+  memo?: MemoInput,
+) {
+  const exists = await accountExists(destination);
+  const ops = paymentOps(destination, parseAsset(assetIdStr), amount, exists);
+  return submit(signer, ops, memo);
+}
+
+export async function changeTrust(signer: Signer, assetIdStr: string, remove = false) {
+  const asset = parseAsset(assetIdStr);
+  if (asset.isNative()) throw new Error("XLM does not need a trustline");
+  return submit(signer, [Operation.changeTrust({ asset, ...(remove ? { limit: "0" } : {}) })]);
+}
+
+export interface SwapQuote {
+  destAmount: string;
+  path: Asset[];
+}
+
+export async function quoteSwap(
+  fromId: string,
+  toId: string,
+  amount: string,
+): Promise<SwapQuote | null> {
+  validateAmount(amount);
+  const res = await server.strictSendPaths(parseAsset(fromId), amount, [parseAsset(toId)]).call();
+  if (!res.records.length) return null;
+  const best = res.records.reduce((a, b) =>
+    parseFloat(b.destination_amount) > parseFloat(a.destination_amount) ? b : a,
+  );
+  const path = best.path.map((p) =>
+    p.asset_type === "native" ? Asset.native() : new Asset(p.asset_code, p.asset_issuer),
+  );
+  return { destAmount: best.destination_amount, path };
+}
+
+export function swapOp(
+  self: string,
+  fromId: string,
+  toId: string,
+  amount: string,
+  quote: SwapQuote,
+  slippagePct: number,
+) {
+  const destMin = toStellarAmount(parseFloat(quote.destAmount) * (1 - slippagePct / 100));
+  return Operation.pathPaymentStrictSend({
+    sendAsset: parseAsset(fromId),
+    sendAmount: amount,
+    destination: self,
+    destAsset: parseAsset(toId),
+    destMin,
+    path: quote.path,
+  });
+}
+
+export async function swap(
+  signer: Signer,
+  fromId: string,
+  toId: string,
+  amount: string,
+  quote: SwapQuote,
+  slippagePct = 1,
+) {
+  return submit(signer, [swapOp(signer.publicKey, fromId, toId, amount, quote, slippagePct)]);
+}
