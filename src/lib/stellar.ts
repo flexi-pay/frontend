@@ -3,6 +3,7 @@ import {
   Asset,
   BASE_FEE,
   Horizon,
+  Keypair,
   Memo,
   NotFoundError,
   Operation,
@@ -294,3 +295,68 @@ export async function swap(
 ) {
   return submit(signer, [swapOp(signer.publicKey, fromId, toId, amount, quote, slippagePct)]);
 }
+
+// ---------- History ----------
+
+export interface HistoryItem {
+  id: string;
+  type: string;
+  direction: "in" | "out" | "self";
+  amount: string;
+  asset: string;
+  counterparty: string;
+  createdAt: string;
+  txHash: string;
+  detail?: string;
+}
+
+export async function loadHistory(publicKey: string, limit = 30): Promise<HistoryItem[]> {
+  try {
+    const page = await server.payments().forAccount(publicKey).order("desc").limit(limit).call();
+    return page.records.map((r) => normalizeHistory(r as unknown as Record<string, string>, publicKey));
+  } catch (e) {
+    if (e instanceof NotFoundError) return [];
+    throw e;
+  }
+}
+
+const code = (r: Record<string, string>, prefix = "") =>
+  r[`${prefix}asset_type`] === "native" ? "XLM" : r[`${prefix}asset_code`];
+
+export function normalizeHistory(r: Record<string, string>, me: string): HistoryItem {
+  const base = { id: r.id, type: r.type, createdAt: r.created_at, txHash: r.transaction_hash };
+  if (r.type === "create_account") {
+    const out = r.funder === me;
+    return {
+      ...base,
+      direction: out ? "out" : "in",
+      amount: r.starting_balance,
+      asset: "XLM",
+      counterparty: out ? r.account : r.funder,
+      detail: "Account created",
+    };
+  }
+  if (r.type === "account_merge") {
+    return { ...base, direction: r.into === me ? "in" : "out", amount: "", asset: "XLM", counterparty: r.account, detail: "Account merge" };
+  }
+  if (r.type.startsWith("path_payment")) {
+    const self = r.from === me && r.to === me;
+    return {
+      ...base,
+      direction: self ? "self" : r.from === me ? "out" : "in",
+      amount: r.from === me && !self ? r.source_amount : r.amount,
+      asset: r.from === me && !self ? code(r, "source_") : code(r),
+      counterparty: self ? me : r.from === me ? r.to : r.from,
+      detail: self ? `Swapped ${r.source_amount} ${code(r, "source_")} → ${r.amount} ${code(r)}` : "Path payment",
+    };
+  }
+  return {
+    ...base,
+    direction: r.from === me ? (r.to === me ? "self" : "out") : "in",
+    amount: r.amount,
+    asset: code(r) ?? "",
+    counterparty: r.from === me ? r.to : r.from,
+  };
+}
+
+export { Keypair, StrKey };
