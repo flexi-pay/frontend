@@ -3,6 +3,7 @@ import QRCode from "qrcode";
 import jsQR from "jsqr";
 import { NETWORK } from "../lib/config";
 import {
+  changeTrust,
   fundWithFriendbot,
   sendPayment,
   spendableXlm,
@@ -279,6 +280,65 @@ export function Scan({ ctx }: { ctx: WalletCtx }) {
           <div className="row"><input className="input" value={paste} onChange={(e) => setPaste(e.target.value)} placeholder="G… or web+stellar:pay?…" /><button className="btn btn-ghost btn-sm" disabled={!paste} onClick={() => handle(paste)}>Continue</button></div>
         </Field>
         <Notice kind="error">{err}</Notice>
+      </Card>
+    </div>
+  );
+}
+
+// ---------------- Assets / trustlines ----------------
+
+const KNOWN_TESTNET_ASSETS = [
+  { label: "USDC", id: "USDC:GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5" },
+  { label: "SRT (test anchor)", id: "SRT:GCDNJUBQSX7AJWLJACMJ7I4BC3Z47BQUTMHEICZLE6MU4KQBRYG5JY6B" },
+];
+const KNOWN_MAINNET_ASSETS = [
+  { label: "USDC", id: "USDC:GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN" },
+  { label: "EURC", id: "EURC:GDHU6WRG4IEQXM5NZ4BMPKOXHW76MZM4Y2IEMFDVXBSDP6SJY4ITNPP2" },
+];
+
+export function Assets({ ctx }: { ctx: WalletCtx }) {
+  const [id, setId] = useState("");
+  const a = useAction();
+  const credit = (ctx.state?.balances ?? []).filter((b) => !b.isNative);
+  const known = NETWORK.name === "testnet" ? KNOWN_TESTNET_ASSETS : KNOWN_MAINNET_ASSETS;
+  const busyText = ctx.signer.kind === "external" ? "Confirm in your wallet…" : "Submitting…";
+
+  const add = (assetId: string) =>
+    a.run(async () => { const r = await changeTrust(ctx.signer, assetId.trim()); setId(""); await ctx.refresh(); return r; }, (r) => <>Asset added. {txLink(r.hash)}</>);
+  const remove = (assetId: string, balance: string) =>
+    a.run(async () => {
+      if (parseFloat(balance) > 0) throw new Error("Send or convert the full balance before removing this asset");
+      if (!confirm("Remove this asset? Its 0.5 XLM reserve will be released.")) throw new Error("Cancelled");
+      const r = await changeTrust(ctx.signer, assetId, true); await ctx.refresh(); return r;
+    }, (r) => <>Asset removed. {txLink(r.hash)}</>);
+
+  return (
+    <div className="center-wrap stack">
+      <Card title="Your assets">
+        {credit.length === 0 ? <p className="empty">Only XLM so far. Add USDC or another asset below.</p> : (
+          <ul className="list">
+            {credit.map((b) => (
+              <li key={b.id}>
+                <span className="coin">{b.code.slice(0, 4)}</span>
+                <div className="grow"><b>{b.code}</b><div className="muted small mono">{short(b.issuer, 6)}</div></div>
+                <span className="amount">{fmt(b.balance, 4)}</span>
+                <button className="btn btn-ghost btn-sm btn-danger" disabled={a.busy} onClick={() => remove(b.id, b.balance)}>Remove</button>
+              </li>
+            ))}
+          </ul>
+        )}
+        <p className="muted small">Each asset reserves 0.5 XLM, returned when you remove it.</p>
+      </Card>
+      <Card title="Add an asset">
+        <div className="row">
+          {known.filter((k) => !credit.some((c) => c.id === k.id)).map((k) => (
+            <button key={k.id} className="btn btn-ghost btn-sm" disabled={a.busy || !ctx.state?.exists} onClick={() => add(k.id)}><Icon name="plus" size={14} /> {k.label}</button>
+          ))}
+        </div>
+        <Field label="Custom asset (CODE:ISSUER)"><input placeholder="CODE:G…" value={id} onChange={(e) => setId(e.target.value)} /></Field>
+        <Notice kind="error">{a.error}</Notice>
+        <Notice kind="ok">{a.ok}</Notice>
+        <button className="btn btn-primary btn-block" disabled={a.busy || !id || !ctx.state?.exists} onClick={() => add(id)}>{a.busy ? busyText : "Add asset"}</button>
       </Card>
     </div>
   );
