@@ -7,6 +7,7 @@ import {
   type AccountState, type HistoryItem, type MemoInput, type SwapQuote,
 } from "../lib/stellar";
 import { buildPayUri, parsePayUri, type PayRequest } from "../lib/sep7";
+import { isFederationAddress, myName, namesEnabled, resolveRecipient, type Resolved } from "../lib/names";
 import type { Signer } from "../lib/signer";
 import { Icon } from "./Icon";
 import { Card, Copy, Field, Notice, fmt, short, useAction } from "./ui";
@@ -95,6 +96,7 @@ export function Send({ ctx }: { ctx: WalletCtx }) {
   const [amount, setAmount] = useState(p?.amount ?? "");
   const [memo, setMemo] = useState<MemoInput>({ type: p?.memo ? p.memoType ?? "text" : "none", value: p?.memo ?? "" });
   const [review, setReview] = useState(false);
+  const [resolved, setResolved] = useState<Resolved | null>(null);
   const a = useAction();
   const bal = balances.find((b) => b.id === asset);
   const max = asset === "XLM" && ctx.state ? spendableXlm(ctx.state).toFixed(7) : bal?.balance;
@@ -102,9 +104,10 @@ export function Send({ ctx }: { ctx: WalletCtx }) {
 
   const go = () =>
     a.run(async () => {
-      if (to.trim() === ctx.signer.publicKey) throw new Error("You can't send to yourself");
-      const r = await sendPayment(ctx.signer, to.trim(), asset, amount, memo);
-      setAmount(""); setReview(false);
+      const dest = resolved?.accountId ?? to.trim();
+      if (dest === ctx.signer.publicKey) throw new Error("You can't send to yourself");
+      const r = await sendPayment(ctx.signer, dest, asset, amount, memo);
+      setAmount(""); setReview(false); setResolved(null);
       await ctx.refresh();
       return r;
     }, (r) => <>Sent {amount} {assetLabel(asset)}. {txLink(r.hash)}</>);
@@ -113,9 +116,9 @@ export function Send({ ctx }: { ctx: WalletCtx }) {
     <div className="center-wrap stack">
       <Card title="Send money">
         {p?.msg && <Notice kind="info">Payment request: “{p.msg}”</Notice>}
-        <Field label="To (Stellar address)">
+        <Field label="To (Stellar address or name)" hint={namesEnabled() ? "e.g. G… or nuel*flexipay.app" : undefined}>
           <div className="row">
-            <input placeholder="G…" value={to} onChange={(e) => { setTo(e.target.value); setReview(false); }} />
+            <input placeholder="G… or name*domain" value={to} onChange={(e) => { setTo(e.target.value); setReview(false); setResolved(null); }} />
             <button className="btn btn-ghost btn-sm" onClick={() => ctx.go("Scan")}><Icon name="scan" size={14} /> Scan</button>
           </div>
         </Field>
@@ -142,7 +145,8 @@ export function Send({ ctx }: { ctx: WalletCtx }) {
         {review && (
           <div className="quote">
             <div className="between"><span className="muted">You send</span><b>{amount} {assetLabel(asset)}</b></div>
-            <div className="between"><span className="muted">To</span><span className="mono small">{short(to.trim(), 8)}</span></div>
+            <div className="between"><span className="muted">To</span><span className="mono small">{resolved?.stellarAddress && isFederationAddress(to) ? <>{resolved.stellarAddress} → {short(resolved.accountId, 6)}</> : short(resolved?.accountId ?? to.trim(), 8)}</span></div>
+            {resolved?.memo && <div className="muted small">The recipient requires memo “{resolved.memo}” — added automatically.</div>}
             {memo.type !== "none" && memo.value && <div className="between"><span className="muted">Memo</span><span>{memo.value}</span></div>}
             <div className="between"><span className="muted">Network fee</span><span>~0.00001 XLM</span></div>
           </div>
@@ -150,7 +154,12 @@ export function Send({ ctx }: { ctx: WalletCtx }) {
         <Notice kind="error">{a.error}</Notice>
         <Notice kind="ok">{a.ok}</Notice>
         {!review ? (
-          <button className="btn btn-primary btn-block" disabled={!to || !amount || !ctx.state?.exists || missingTrust} onClick={() => { a.setError(""); setReview(true); }}>Review</button>
+          <button className="btn btn-primary btn-block" disabled={a.busy || !to || !amount || !ctx.state?.exists || missingTrust} onClick={() => a.run(async () => {
+            const r = await resolveRecipient(to);
+            setResolved(r);
+            if (r.memo) setMemo({ type: r.memoType ?? "text", value: r.memo });
+            setReview(true);
+          })}>{a.busy ? "Looking up…" : "Review"}</button>
         ) : (
           <button className="btn btn-primary btn-block" disabled={a.busy} onClick={go}>{a.busy ? (ctx.signer.kind === "external" ? "Confirm in your wallet…" : "Sending…") : `Confirm & send`}</button>
         )}
@@ -167,6 +176,8 @@ export function Receive({ ctx }: { ctx: WalletCtx }) {
   const [amount, setAmount] = useState("");
   const [memo, setMemo] = useState("");
   const [qr, setQr] = useState("");
+  const [name, setName] = useState<string | null>(null);
+  useEffect(() => { if (namesEnabled()) myName(ctx.signer.publicKey).then(setName); }, [ctx.signer.publicKey]);
   const b = balances.find((x) => x.id === asset);
   const uri = useMemo(() => {
     if (!amount && !memo && asset === "XLM") return ctx.signer.publicKey;
@@ -188,9 +199,11 @@ export function Receive({ ctx }: { ctx: WalletCtx }) {
           <Field label="Amount (optional)"><input inputMode="decimal" placeholder="Any amount" value={amount} onChange={(e) => setAmount(e.target.value.trim())} /></Field>
         </div>
         <Field label="Note / memo (optional)"><input maxLength={28} value={memo} onChange={(e) => setMemo(e.target.value)} placeholder="e.g. Invoice 42" /></Field>
+        {name && <Field label="Your name"><b style={{ color: "var(--text)", fontSize: "1.1rem" }}>{name}</b></Field>}
         <Field label="Your address"><code className="mono small">{ctx.signer.publicKey}</code></Field>
         <div className="row">
           <Copy text={ctx.signer.publicKey} label="Copy address" />
+          {name && <Copy text={name} label="Copy name" />}
           {uri !== ctx.signer.publicKey && <Copy text={uri} label="Copy payment link" />}
           {"share" in navigator && <button className="btn btn-ghost btn-sm" onClick={() => navigator.share({ text: uri }).catch(() => {})}>Share</button>}
         </div>
@@ -208,6 +221,7 @@ export function Scan({ ctx }: { ctx: WalletCtx }) {
   const [paste, setPaste] = useState("");
 
   const handle = (text: string) => {
+    if (isFederationAddress(text)) return ctx.go("Send", { destination: text.trim() });
     try { ctx.go("Send", parsePayUri(text)); } catch (e) { setErr(e instanceof Error ? e.message : String(e)); }
   };
 
@@ -272,7 +286,7 @@ export function Scan({ ctx }: { ctx: WalletCtx }) {
           <input type="file" accept="image/*" hidden onChange={(e) => fromImage(e.target.files?.[0])} />
         </label>
         <Field label="…or paste an address / payment link">
-          <div className="row"><input className="input" value={paste} onChange={(e) => setPaste(e.target.value)} placeholder="G… or web+stellar:pay?…" /><button className="btn btn-ghost btn-sm" disabled={!paste} onClick={() => handle(paste)}>Continue</button></div>
+          <div className="row"><input className="input" value={paste} onChange={(e) => setPaste(e.target.value)} placeholder="G…, name*domain or web+stellar:pay?…" /><button className="btn btn-ghost btn-sm" disabled={!paste} onClick={() => handle(paste)}>Continue</button></div>
         </Field>
         <Notice kind="error">{err}</Notice>
       </Card>
