@@ -1,9 +1,17 @@
+import { useState } from "react";
 import { NETWORK } from "../lib/config";
-import { fundWithFriendbot, spendableXlm, type AccountState, type HistoryItem } from "../lib/stellar";
+import {
+  fundWithFriendbot,
+  sendPayment,
+  spendableXlm,
+  type AccountState,
+  type HistoryItem,
+  type MemoInput,
+} from "../lib/stellar";
 import { type PayRequest } from "../lib/sep7";
 import type { Signer } from "../lib/signer";
 import { Icon } from "./Icon";
-import { Card, Notice, fmt, short, useAction } from "./ui";
+import { Card, Field, Notice, fmt, short, useAction } from "./ui";
 
 export type Tab = "Home" | "Send" | "Receive" | "Scan" | "Convert" | "Cash" | "Escrow" | "Assets" | "Activity" | "Settings";
 
@@ -74,6 +82,81 @@ export function Home({ ctx }: { ctx: WalletCtx }) {
           <HistoryList items={ctx.history.slice(0, 5)} loading={ctx.historyLoading} />
         </Card>
       </div>
+    </div>
+  );
+}
+
+// ---------------- Send ----------------
+
+export function Send({ ctx }: { ctx: WalletCtx }) {
+  const p = ctx.prefill;
+  const balances = ctx.state?.balances ?? [];
+  const prefAsset = p?.assetCode && p.assetCode !== "XLM" ? `${p.assetCode}:${p.assetIssuer}` : "XLM";
+  const [to, setTo] = useState(p?.destination ?? "");
+  const [asset, setAsset] = useState(prefAsset);
+  const [amount, setAmount] = useState(p?.amount ?? "");
+  const [memo, setMemo] = useState<MemoInput>({ type: p?.memo ? p.memoType ?? "text" : "none", value: p?.memo ?? "" });
+  const [review, setReview] = useState(false);
+  const a = useAction();
+  const bal = balances.find((b) => b.id === asset);
+  const max = asset === "XLM" && ctx.state ? spendableXlm(ctx.state).toFixed(7) : bal?.balance;
+  const missingTrust = asset !== "XLM" && !bal;
+
+  const go = () =>
+    a.run(async () => {
+      if (to.trim() === ctx.signer.publicKey) throw new Error("You can't send to yourself");
+      const r = await sendPayment(ctx.signer, to.trim(), asset, amount, memo);
+      setAmount(""); setReview(false);
+      await ctx.refresh();
+      return r;
+    }, (r) => <>Sent {amount} {assetLabel(asset)}. {txLink(r.hash)}</>);
+
+  return (
+    <div className="center-wrap stack">
+      <Card title="Send money">
+        {p?.msg && <Notice kind="info">Payment request: “{p.msg}”</Notice>}
+        <Field label="To (Stellar address)">
+          <div className="row">
+            <input placeholder="G…" value={to} onChange={(e) => { setTo(e.target.value); setReview(false); }} />
+            <button className="btn btn-ghost btn-sm" onClick={() => ctx.go("Scan")}><Icon name="scan" size={14} /> Scan</button>
+          </div>
+        </Field>
+        <div className="grid2">
+          <Field label="Asset">
+            <select value={asset} onChange={(e) => { setAsset(e.target.value); setReview(false); }}>
+              {balances.map((b) => <option key={b.id} value={b.id}>{b.code}{b.issuer ? ` (${short(b.issuer, 4)})` : ""}</option>)}
+              {!balances.some((b) => b.id === asset) && <option value={asset}>{assetLabel(asset)}</option>}
+            </select>
+          </Field>
+          <Field label="Amount" hint={max && <>Available: <button type="button" className="link" onClick={() => setAmount(String(Number(max)))}>{fmt(max)}</button></>}>
+            <input inputMode="decimal" placeholder="0.00" value={amount} onChange={(e) => { setAmount(e.target.value.trim()); setReview(false); }} />
+          </Field>
+        </div>
+        <div className="grid2">
+          <Field label="Memo type" hint="Exchanges usually require one">
+            <select value={memo.type} onChange={(e) => setMemo({ ...memo, type: e.target.value as MemoInput["type"] })}>
+              <option value="none">None</option><option value="text">Text</option><option value="id">ID</option><option value="hash">Hash</option>
+            </select>
+          </Field>
+          <Field label="Memo"><input disabled={memo.type === "none"} value={memo.value} onChange={(e) => setMemo({ ...memo, value: e.target.value })} /></Field>
+        </div>
+        {missingTrust && <Notice kind="info">You don't hold {assetLabel(asset)} yet. Add it under Assets first.</Notice>}
+        {review && (
+          <div className="quote">
+            <div className="between"><span className="muted">You send</span><b>{amount} {assetLabel(asset)}</b></div>
+            <div className="between"><span className="muted">To</span><span className="mono small">{short(to.trim(), 8)}</span></div>
+            {memo.type !== "none" && memo.value && <div className="between"><span className="muted">Memo</span><span>{memo.value}</span></div>}
+            <div className="between"><span className="muted">Network fee</span><span>~0.00001 XLM</span></div>
+          </div>
+        )}
+        <Notice kind="error">{a.error}</Notice>
+        <Notice kind="ok">{a.ok}</Notice>
+        {!review ? (
+          <button className="btn btn-primary btn-block" disabled={!to || !amount || !ctx.state?.exists || missingTrust} onClick={() => { a.setError(""); setReview(true); }}>Review</button>
+        ) : (
+          <button className="btn btn-primary btn-block" disabled={a.busy} onClick={go}>{a.busy ? (ctx.signer.kind === "external" ? "Confirm in your wallet…" : "Sending…") : `Confirm & send`}</button>
+        )}
+      </Card>
     </div>
   );
 }
