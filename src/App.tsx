@@ -12,6 +12,7 @@ import { Tour } from "./components/Tour";
 import { Icon, Logo } from "./components/Icon";
 import { Activity, Assets, Convert, Home, Receive, Scan, Send, type Tab, type WalletCtx } from "./components/Screens";
 import { Card, Copy, Field, Notice, short, useAction } from "./components/ui";
+import { NameCard } from "./components/NameCard";
 import "./App.css";
 
 const EscrowScreen = lazy(() => import("./components/EscrowScreen").then((m) => ({ default: m.EscrowScreen })));
@@ -252,6 +253,7 @@ function Settings({ signer, onDisconnect, onRemoveLocal, theme, setTheme }: { si
         </div>
         <button className="btn btn-ghost" onClick={onDisconnect}>{signer.kind === "local" ? "Lock wallet" : "Disconnect wallet"}</button>
       </Card>
+      <NameCard signer={signer} />
       <Card title="Appearance">
         <div className="seg">
           <button className={theme === "dark" ? "on" : ""} onClick={() => setTheme("dark")}>Dark</button>
