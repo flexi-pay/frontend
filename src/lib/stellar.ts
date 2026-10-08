@@ -11,6 +11,7 @@ import {
   xdr,
 } from "@stellar/stellar-sdk";
 import { NETWORK } from "./config";
+import type { Signer } from "./signer";
 
 export const server = new Horizon.Server(NETWORK.horizonUrl);
 
@@ -162,4 +163,62 @@ export function validateAmount(amount: string) {
 /** Round down to 7 decimals (Stellar precision). */
 export function toStellarAmount(n: number): string {
   return (Math.floor(n * 1e7) / 1e7).toFixed(7);
+}
+
+// ---------- Submission ----------
+
+async function currentFee(): Promise<string> {
+  try {
+    const stats = await server.feeStats();
+    // p70 of recent fees, at least base fee, capped to avoid surprises
+    return String(Math.min(Math.max(parseInt(stats.fee_charged.p70), 100), 10_000));
+  } catch {
+    return BASE_FEE;
+  }
+}
+
+export async function submit(signer: Signer, ops: xdr.Operation[], memo?: MemoInput) {
+  const source = await server.loadAccount(signer.publicKey);
+  const tx = buildTx(source, ops, memo, await currentFee());
+  let signedXdr: string;
+  try {
+    signedXdr = await signer.sign(tx.toXDR());
+  } catch (e) {
+    throw new Error(`Signing was cancelled or failed: ${e instanceof Error ? e.message : (e as { message?: string })?.message ?? e}`);
+  }
+  try {
+    return await server.submitTransaction(TransactionBuilder.fromXDR(signedXdr, NETWORK.passphrase));
+  } catch (e) {
+    throw new Error(horizonError(e));
+  }
+}
+
+export function horizonError(e: unknown): string {
+  const anyE = e as {
+    response?: { data?: { extras?: { result_codes?: unknown }; title?: string } };
+    message?: string;
+  };
+  const codes = anyE?.response?.data?.extras?.result_codes as
+    | { transaction?: string; operations?: string[] }
+    | undefined;
+  if (codes) {
+    const friendly: Record<string, string> = {
+      op_underfunded: "Insufficient balance",
+      op_no_trust: "Destination has no trustline for this asset",
+      op_no_destination: "Destination account does not exist",
+      op_low_reserve: "Not enough XLM to cover the minimum reserve",
+      op_line_full: "Destination trustline limit reached",
+      op_too_few_offers: "No path / not enough liquidity for this swap",
+      op_under_dest_min: "Price moved beyond slippage — try again",
+      op_invalid_limit: "Cannot remove a trustline that still has a balance",
+      op_src_no_trust: "You have no trustline for this asset",
+      tx_insufficient_fee: "Network fee too low — try again",
+      tx_bad_seq: "Sequence mismatch — try again",
+    };
+    const parts = [...(codes.operations ?? []), codes.transaction ?? ""].filter(
+      (c) => c && c !== "op_success" && c !== "tx_failed",
+    );
+    return parts.map((c) => friendly[c] ?? c).join(", ") || "Transaction failed";
+  }
+  return anyE?.response?.data?.title || anyE?.message || String(e);
 }
