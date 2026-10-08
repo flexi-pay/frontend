@@ -50,7 +50,7 @@ npm run build:extension   # Chrome extension → dist-extension/
 
 ### Deploy
 
-GitHub Pages deploys automatically from `main`: set **Settings → Pages → Source** to **GitHub Actions**. Contract IDs and the names API come from repository variables.
+GitHub Pages deploys automatically from `main` once you set **Settings → Pages → Source** to **GitHub Actions** and add the repository variable `PAGES_ENABLED=true`. Contract IDs and the names API come from repository variables.
 
 On Vercel or Netlify, use framework **Vite**, build command `npm run build`, and output folder `dist`.
 
