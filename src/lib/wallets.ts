@@ -56,6 +56,12 @@ function externalSigner(id: string, name: string, address: string): Signer {
       const { signedTxXdr } = await k.signTransaction(xdr, { networkPassphrase: NETWORK.passphrase, address });
       return signedTxXdr;
     },
+    async signMessage(message) {
+      const k = await kit();
+      k.setWallet(id);
+      const { signedMessage } = await k.signMessage(message, { networkPassphrase: NETWORK.passphrase, address });
+      return signedMessage;
+    },
   };
 }
 
