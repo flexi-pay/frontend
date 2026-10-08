@@ -40,3 +40,6 @@ export const NETWORK: NetworkConfig = {
   ...base,
   sorobanRpcUrl: (import.meta.env?.VITE_SOROBAN_RPC_URL as string) || base.sorobanRpcUrl,
 };
+
+/** Product name — change it here to rebrand the whole app. */
+export const BRAND = "Starling";
