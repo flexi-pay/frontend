@@ -1,4 +1,3 @@
-
 /* ---------- Theme tokens ---------- */
 :root {
   --bg: #07060d; --bg2: #0c0a15; --panel: #110e1c; --panel2: #181427; --border: #241f38; --border2: #332b4d;
@@ -212,3 +211,16 @@ input, select, textarea { font: inherit; }
   .section { padding: 64px 16px; }
   .nav-inner { padding: 12px 16px; }
 }
+
+/* ---------- Chrome extension popup ---------- */
+html.popup body { width: 380px; height: 600px; overflow-y: auto; }
+html.popup .shell { grid-template-columns: 1fr; }
+html.popup .side { display: none; }
+html.popup .main { padding: 12px 12px 80px; }
+html.popup .bottom-nav { display: flex; position: fixed; bottom: 0; left: 0; right: 0; z-index: 25; background: var(--bg2); border-top: 1px solid var(--border); padding: 4px; }
+html.popup .bottom-nav button { flex: 1; border: 0; background: none; color: var(--muted); display: flex; flex-direction: column; align-items: center; gap: 2px; font-size: .64rem; padding: 6px 0; }
+html.popup .bottom-nav button.on { color: var(--accent); }
+html.popup .quick { grid-template-columns: repeat(3, 1fr); }
+html.popup .cols, html.popup .grid2 { grid-template-columns: 1fr; }
+html.popup .theme-toggle { display: none; }
+html.popup .topbar h1 { font-size: 1.2rem; }
