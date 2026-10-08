@@ -1,0 +1,35 @@
+{
+  "name": "starling-wallet",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "lint": "oxlint",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "build:extension": "tsc -b && vite build --config vite.extension.config.ts"
+  },
+  "dependencies": {
+    "@creit.tech/stellar-wallets-kit": "^2.7.1",
+    "@stellar/stellar-sdk": "^17.2.1",
+    "jsqr": "^1.4.0",
+    "qrcode": "^1.5.4",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8"
+  },
+  "devDependencies": {
+    "@types/node": "^24.13.3",
+    "@types/qrcode": "^1.5.6",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.7",
+    "@vitejs/plugin-react": "^6.1.1",
+    "oxlint": "^1.81.0",
+    "typescript": "~6.0.2",
+    "vite": "^8.3.0",
+    "vite-plugin-node-polyfills": "^0.28.0",
+    "vitest": "^5.0.3"
+  },
+  "description": "Starling by FlexiPay — non-custodial Stellar wallet (web + Chrome extension)"
+}
