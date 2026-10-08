@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import QRCode from "qrcode";
+import jsQR from "jsqr";
 import { NETWORK } from "../lib/config";
 import {
   fundWithFriendbot,
@@ -9,7 +10,7 @@ import {
   type HistoryItem,
   type MemoInput,
 } from "../lib/stellar";
-import { buildPayUri, type PayRequest } from "../lib/sep7";
+import { buildPayUri, parsePayUri, type PayRequest } from "../lib/sep7";
 import type { Signer } from "../lib/signer";
 import { Icon } from "./Icon";
 import { Card, Copy, Field, Notice, fmt, short, useAction } from "./ui";
@@ -197,6 +198,87 @@ export function Receive({ ctx }: { ctx: WalletCtx }) {
           {uri !== ctx.signer.publicKey && <Copy text={uri} label="Copy payment link" />}
           {"share" in navigator && <button className="btn btn-ghost btn-sm" onClick={() => navigator.share({ text: uri }).catch(() => {})}>Share</button>}
         </div>
+      </Card>
+    </div>
+  );
+}
+
+// ---------------- Scan to pay ----------------
+
+export function Scan({ ctx }: { ctx: WalletCtx }) {
+  const video = useRef<HTMLVideoElement>(null);
+  const [err, setErr] = useState("");
+  const [active, setActive] = useState(false);
+  const [paste, setPaste] = useState("");
+
+  const handle = (text: string) => {
+    try { ctx.go("Send", parsePayUri(text)); } catch (e) { setErr(e instanceof Error ? e.message : String(e)); }
+  };
+
+  useEffect(() => {
+    if (!active) return;
+    let stream: MediaStream | undefined;
+    let raf = 0;
+    let stopped = false;
+    const canvas = document.createElement("canvas");
+    const g = canvas.getContext("2d", { willReadFrequently: true })!;
+    (async () => {
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
+        if (stopped) return;
+        const v = video.current!;
+        v.srcObject = stream;
+        await v.play();
+        const tick = () => {
+          if (stopped) return;
+          if (v.readyState === v.HAVE_ENOUGH_DATA) {
+            canvas.width = v.videoWidth; canvas.height = v.videoHeight;
+            g.drawImage(v, 0, 0);
+            const code = jsQR(g.getImageData(0, 0, canvas.width, canvas.height).data, canvas.width, canvas.height);
+            if (code?.data) { stopped = true; handle(code.data); return; }
+          }
+          raf = requestAnimationFrame(tick);
+        };
+        tick();
+      } catch (e) {
+        setErr(`Camera unavailable: ${e instanceof Error ? e.message : e}. You can upload a photo of the code or paste it instead.`);
+        setActive(false);
+      }
+    })();
+    return () => { stopped = true; cancelAnimationFrame(raf); stream?.getTracks().forEach((t) => t.stop()); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [active]);
+
+  const fromImage = async (f?: File) => {
+    if (!f) return;
+    setErr("");
+    const img = await createImageBitmap(f);
+    const c = document.createElement("canvas");
+    c.width = img.width; c.height = img.height;
+    const g = c.getContext("2d")!;
+    g.drawImage(img, 0, 0);
+    const code = jsQR(g.getImageData(0, 0, c.width, c.height).data, c.width, c.height);
+    if (code?.data) handle(code.data); else setErr("No QR code found in that image");
+  };
+
+  return (
+    <div className="center-wrap stack">
+      <Card title="Scan to pay">
+        <p className="muted small">Scan a Stellar address or a payment request (SEP-7). You'll review everything before paying.</p>
+        {active ? (
+          <div className="scanner"><video ref={video} playsInline muted /><div className="frame" /></div>
+        ) : (
+          <button className="btn btn-primary btn-block" onClick={() => { setErr(""); setActive(true); }}><Icon name="scan" size={16} /> Open camera</button>
+        )}
+        {active && <button className="btn btn-ghost btn-block" onClick={() => setActive(false)}>Stop camera</button>}
+        <label className="btn btn-ghost btn-block">
+          Upload a photo of a code
+          <input type="file" accept="image/*" hidden onChange={(e) => fromImage(e.target.files?.[0])} />
+        </label>
+        <Field label="…or paste an address / payment link">
+          <div className="row"><input className="input" value={paste} onChange={(e) => setPaste(e.target.value)} placeholder="G… or web+stellar:pay?…" /><button className="btn btn-ghost btn-sm" disabled={!paste} onClick={() => handle(paste)}>Continue</button></div>
+        </Field>
+        <Notice kind="error">{err}</Notice>
       </Card>
     </div>
   );
