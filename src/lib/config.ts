@@ -43,3 +43,6 @@ export const NETWORK: NetworkConfig = {
 
 /** Product name — change it here to rebrand the whole app. */
 export const BRAND = "Starling";
+
+/** Deployed Starling escrow contract (C…). Set VITE_ESCROW_CONTRACT_ID after running scripts/deploy-escrow.sh. */
+export const ESCROW_CONTRACT_ID: string = (import.meta.env?.VITE_ESCROW_CONTRACT_ID as string) || "";
